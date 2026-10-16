@@ -1,0 +1,6 @@
+{
+  "name": "Supermedia Sondaggi Politici Italiani",
+  "description": "La nostra media ponderata settimanale indipendente delle intenzioni di voto in Italia, calcolata direttamente dai sondaggi di tutte le fonti a sabato scorso.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
