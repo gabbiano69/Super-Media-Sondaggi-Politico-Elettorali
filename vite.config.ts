@@ -5,6 +5,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: '/Super-Media-Sondaggi-Politico-Elettorali/', // <--- AGGIUNTO QUESTO
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
