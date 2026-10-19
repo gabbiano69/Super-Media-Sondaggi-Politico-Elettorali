@@ -3,7 +3,7 @@ export interface Party {
   name: string;
   shortName: string;
   leader: string;
-  coalition: 'governo' | 'opposizione' | 'centro' | 'altri';
+  coalition: 'governo' | 'opposizione' | 'centro' | 'solitario' | 'altri';
   coalitionLabel: string;
   color: string;
   accentBg: string;
@@ -44,17 +44,49 @@ export interface SupermediaRelease {
   institutesCount: number;
   pollsIncludedIds: string[];
   partyAverages: Record<string, { percent: number; variation: number }>;
+  nonSiEsprime?: number;
   coalitions: {
     governo: { total: number; variation: number; label: string };
     governoConVannacci: { total: number; variation: number; label: string };
     opposizioneCampoLargo: { total: number; variation: number; label: string };
     centrosinistraConIV?: { total: number; variation: number; label: string };
     centroRiformista: { total: number; variation: number; label: string };
+    partitoLiberaldemocratico?: { total: number; variation: number; label: string };
   };
   turnout: {
     turnoutEstimate: number;
     undecidedAndAbstain: number;
+    nonSiEsprime?: number;
   };
+}
+
+export interface MonthlyDataReport {
+  id: string;
+  monthName: string;
+  period: string;
+  previousMonthName: string;
+  totalPollsSampled: number;
+  institutesCount: number;
+  partyAverages: Record<
+    string,
+    {
+      percent: number;
+      variationFromPreviousMonth: number;
+      trendIcon: 'up' | 'down' | 'neutral';
+    }
+  >;
+  nonSiEsprime: number;
+  nonSiEsprimeVariation: number;
+  turnoutEstimate: number;
+  coalitions: {
+    governo: number;
+    governoConVannacci: number;
+    campoLargoSenzaIV: number;
+    campoLargoConIV: number;
+    pldMarattin: number; // Partito Liberaldemocratico (da solo)
+    centroRiformista: number;
+  };
+  keyTakeaways: string[];
 }
 
 export interface InstituteInfo {

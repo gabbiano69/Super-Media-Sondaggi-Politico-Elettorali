@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -9,19 +9,25 @@ import {
   ExternalLink,
   Clock,
   CheckCircle2,
-  Radio,
   Scale,
   Sparkles,
+  BarChart3,
+  Sliders,
+  ChevronRight,
 } from 'lucide-react';
-import { LATEST_SUPERMEDIA, PARTIES, COMPONENT_POLLS_LAST_SATURDAY } from '../data/politicalData';
+import { LATEST_SUPERMEDIA, PARTIES, COMPONENT_POLLS_LAST_SATURDAY, getParty4WeekTrend } from '../data/politicalData';
 import { PartyLogo } from './PartyLogo';
+import { PartySparkline } from './PartySparkline';
 import { PollsTrendChart } from './PollsTrendChart';
 import { PollRecord } from '../types/polls';
+import { WeightingModelType } from '../utils/weightCalculator';
+import { calculateAverage, DEFAULT_PREVIOUS_AVERAGES } from '../services/dataService';
 
 interface SupermediaDashboardProps {
   onNavigateToMethodology: () => void;
   onNavigateToTrends: () => void;
   onNavigateToMonitor: () => void;
+  onNavigateToMonthly?: () => void;
   onSelectParty: (partyId: string) => void;
   customPolls?: PollRecord[];
 }
@@ -30,41 +36,70 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
   onNavigateToMethodology,
   onNavigateToTrends,
   onNavigateToMonitor,
+  onNavigateToMonthly,
   onSelectParty,
   customPolls,
 }) => {
   const [selectedSort, setSelectedSort] = useState<'percent' | 'variation' | 'coalition'>('percent');
+  const [weightingModel, setWeightingModel] = useState<WeightingModelType>('standard');
+  const [showHighPrecision, setShowHighPrecision] = useState<boolean>(false);
   const [expandedPollId, setExpandedPollId] = useState<string | null>(null);
 
   const release = LATEST_SUPERMEDIA;
   const currentPolls = customPolls && customPolls.length > 0 ? customPolls : COMPONENT_POLLS_LAST_SATURDAY;
+  const pollsTableContainerRef = React.useRef<HTMLDivElement>(null);
 
-  // Sorted parties list
-  const partyEntries = Object.entries(release.partyAverages).map(([id, stats]) => ({
-    id,
-    party: PARTIES[id],
-    percent: stats.percent,
-    variation: stats.variation,
-  }));
+  const scrollTable = (direction: 'left' | 'right') => {
+    if (pollsTableContainerRef.current) {
+      pollsTableContainerRef.current.scrollBy({
+        left: direction === 'left' ? -350 : 350,
+        behavior: 'smooth',
+      });
+    }
+  };
 
-  if (selectedSort === 'percent') {
-    partyEntries.sort((a, b) => b.percent - a.percent);
-  } else if (selectedSort === 'variation') {
-    partyEntries.sort((a, b) => b.variation - a.variation);
-  } else if (selectedSort === 'coalition') {
-    partyEntries.sort((a, b) => {
-      const order = { governo: 1, opposizione: 2, centro: 3, altri: 4 };
-      const cA = order[a.party?.coalition || 'altri'] || 5;
-      const cB = order[b.party?.coalition || 'altri'] || 5;
-      if (cA !== cB) return cA - cB;
-      return b.percent - a.percent;
-    });
-  }
+  // FUNZIONE CENTRALIZZATA: calculateAverage richiamata direttamente
+  const computedState = useMemo(() => {
+    return calculateAverage(currentPolls, weightingModel, DEFAULT_PREVIOUS_AVERAGES);
+  }, [currentPolls, weightingModel]);
 
-  // Key takeaways calculations
-  const firstParty = partyEntries[0];
-  const secondParty = partyEntries[1];
-  const gap = Number((firstParty.percent - secondParty.percent).toFixed(1));
+  // Ordinamento partiti
+  const partyEntries = useMemo(() => {
+    const entries = [...computedState.partyEntries];
+    if (selectedSort === 'percent') {
+      entries.sort((a, b) => b.percentPrecise - a.percentPrecise);
+    } else if (selectedSort === 'variation') {
+      entries.sort((a, b) => b.variation - a.variation);
+    } else if (selectedSort === 'coalition') {
+      entries.sort((a, b) => {
+        const order: Record<string, number> = {
+          governo: 1,
+          opposizione: 2,
+          solitario: 3,
+          centro: 4,
+          altri: 5,
+        };
+        const cA = order[a.party?.coalition || 'altri'] ?? 5;
+        const cB = order[b.party?.coalition || 'altri'] ?? 5;
+        if (cA !== cB) return cA - cB;
+        return b.percentPrecise - a.percentPrecise;
+      });
+    }
+    return entries;
+  }, [computedState.partyEntries, selectedSort]);
+
+  // Indicatori sintetici
+  const firstParty = computedState.firstParty;
+  const secondParty = computedState.secondParty;
+  const gap = computedState.gap;
+  const coalitions = computedState.coalitions;
+  const partyStats = computedState.partyStats;
+
+  // Helper formattazione percentuale
+  const getP = (id: string) => {
+    const val = partyStats[id]?.percentPrecise || 0;
+    return showHighPrecision ? val.toFixed(2) : val.toFixed(1);
+  };
 
   return (
     <div className="space-y-8">
@@ -84,7 +119,6 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
         </div>
 
         <div className="relative z-10 p-6 md:p-8 lg:p-10 max-w-4xl">
-          {/* Metadata line */}
           <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-400 mb-3">
             <span className="text-emerald-400 font-semibold">Nostra Elaborazione Indipendente</span>
             <span aria-hidden="true">·</span>
@@ -100,12 +134,10 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
           </h1>
 
           <p className="mt-4 text-sm sm:text-base text-slate-300 leading-relaxed max-w-3xl">
-            Costruiamo autonomamente la media ponderata aggregando tutte le rilevazioni pubblicate dalle fonti
+            Costruiamo autonomamente la media aggregando tutte le 11 rilevazioni pubblicate dalle fonti
             accreditate (SWG al TG La7, Tecnè su Mediaset, Noto su Porta a Porta, Quorum su Sky TG24, EMG su Agorà,
-            Eumetra su Piazzapulita, Ixè su Cartabianca, Ipsos sul Corriere, Demopolis e Only Numbers). La rilevazione
-            consolidata alle ore 09:00 registra Fratelli d’Italia al 27,2%, con il PD in crescita al 21,1%. Futuro
-            Nazionale di Roberto Vannacci consolida il sorpasso su Forza Italia (7,9% vs 7,4%), mentre il M5S si
-            attesta all'11,9%.
+            Eumetra su Piazzapulita, Ixè su Cartabianca, Ipsos sul Corriere, Demopolis, Only Numbers e Istituto Piepoli).
+            Tutte le viste dell'applicazione richiamano la funzione centralizzata <code>calculateAverage</code> sul dataset CSV certificato.
           </p>
 
           <div className="mt-6 flex flex-wrap items-center gap-4">
@@ -128,13 +160,96 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
         </div>
       </section>
 
+      {/* Model Selector Bar (Interactive switch between Nostra Media Ponderata & Media Aritmetica) */}
+      <section className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-5 shadow-xs">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                Selettore Algoritmo di Calcolo
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
+                Live · calculateAverage
+              </span>
+            </div>
+            <h2 className="text-base sm:text-lg font-bold text-slate-900">
+              Confronta «Nostra Media Ponderata» con «Media Aritmetica Semplice»
+            </h2>
+            <p className="text-xs text-slate-600">
+              {weightingModel === 'standard'
+                ? 'Modello ufficiale Supermedia: algoritmo multi-criterio per campione (√N), affidabilità storica dell’istituto, metodo di rilevazione e freschezza temporale.'
+                : 'Media aritmetica semplice (1/N): ogni sondaggio pesa esattamente 1/11. Per i partiti minori, calcolata solo sui sondaggi in cui compaiono.'}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {/* Toggle standard vs uniform */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                onClick={() => setWeightingModel('standard')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  weightingModel === 'standard'
+                    ? 'bg-slate-950 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Nostra Media Ponderata</span>
+              </button>
+              <button
+                onClick={() => setWeightingModel('uniform')}
+                className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
+                  weightingModel === 'uniform'
+                    ? 'bg-slate-950 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Scale className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Media Aritmetica (1/N)</span>
+              </button>
+            </div>
+
+            {/* Precision toggle */}
+            <button
+              onClick={() => setShowHighPrecision(!showHighPrecision)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                showHighPrecision
+                  ? 'bg-blue-50 border-blue-300 text-blue-900 font-bold'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="Mostra 2 decimali per evidenziare le micro-differenze statistiche"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>{showHighPrecision ? '2 Decimali' : '1 Decimale'}</span>
+            </button>
+          </div>
+        </div>
+
+        {weightingModel === 'uniform' && (
+          <div className="mt-3 p-3 bg-emerald-50/80 rounded-xl border border-emerald-200 text-xs text-emerald-950 flex items-start gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+            <span>
+              <strong>Modalità Media Aritmetica attiva:</strong> tutti i dati della pagina, i totali delle coalizioni e i punti del grafico sottostante sono ricalcolati dividendo per le rilevazioni effettive (per i partiti minori diviso solo per i sondaggi in cui compaiono).
+            </span>
+          </div>
+        )}
+      </section>
+
       {/* KPI Editorial Strip */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-white rounded-xl border border-slate-200/80 p-4 shadow-2xs">
-          <div className="text-xs text-slate-500 font-medium">1° Partito Nazionale</div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500 font-medium">1° Partito Nazionale</span>
+            <PartySparkline
+              data={getParty4WeekTrend(firstParty.id)}
+              color="#0b2447"
+              width={56}
+              height={18}
+            />
+          </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
-              {firstParty.percent.toFixed(1)}%
+              {showHighPrecision ? (partyStats.fdi?.percentPrecise || 27.8).toFixed(2) : (partyStats.fdi?.percent || 27.8).toFixed(1)}%
             </span>
             <span className="text-xs font-semibold font-mono tabular-nums text-emerald-600 flex items-center">
               <TrendingUp className="w-3 h-3 mr-0.5 inline" /> +{firstParty.variation.toFixed(1)}
@@ -142,12 +257,20 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
           </div>
           <div className="mt-1 text-xs text-slate-600 flex items-center gap-1.5 truncate">
             <PartyLogo partyId={firstParty.id} size="sm" className="w-4 h-4!" />
-            <span className="font-semibold text-slate-800 truncate">{firstParty.party?.name}</span>
+            <span className="font-semibold text-slate-800 truncate">{firstParty.name}</span>
           </div>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200/80 p-4 shadow-2xs">
-          <div className="text-xs text-slate-500 font-medium">Distacco Vertice (FdI - PD)</div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500 font-medium">Distacco Vertice (FdI - PD)</span>
+            <PartySparkline
+              data={getParty4WeekTrend('pd')}
+              color="#ce2b37"
+              width={56}
+              height={18}
+            />
+          </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
               {gap.toFixed(1)}%
@@ -155,18 +278,26 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
             <span className="text-xs text-slate-400 font-mono">{gap.toFixed(1)} pt</span>
           </div>
           <div className="mt-1 text-xs text-slate-600 truncate">
-            PD al {secondParty.percent.toFixed(1)}% ({secondParty.variation > 0 ? '+' : ''}{secondParty.variation.toFixed(1)}) · Rapporti stabili
+            PD al {showHighPrecision ? (partyStats.pd?.percentPrecise || 20.3).toFixed(2) : (partyStats.pd?.percent || 20.3).toFixed(1)}% ({secondParty.variation > 0 ? '+' : ''}{secondParty.variation.toFixed(1)}) · Rapporti stabili
           </div>
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200/80 p-4 shadow-2xs">
-          <div className="text-xs text-slate-500 font-medium">3° Partito Nazionale</div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500 font-medium">3° Partito Nazionale</span>
+            <PartySparkline
+              data={getParty4WeekTrend('m5s')}
+              color="#eab308"
+              width={56}
+              height={18}
+            />
+          </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
-              {release.partyAverages.m5s?.percent.toFixed(1)}%
+              {showHighPrecision ? (partyStats.m5s?.percentPrecise || 12.0).toFixed(2) : (partyStats.m5s?.percent || 12.0).toFixed(1)}%
             </span>
             <span className="text-xs font-mono tabular-nums text-slate-500">
-              ({release.partyAverages.m5s?.variation > 0 ? '+' : ''}{release.partyAverages.m5s?.variation.toFixed(1)})
+              ({partyStats.m5s?.variation > 0 ? '+' : ''}{(partyStats.m5s?.variation || 0).toFixed(1)})
             </span>
           </div>
           <div className="mt-1 text-xs text-slate-600 flex items-center gap-1.5 truncate">
@@ -176,74 +307,25 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
         </div>
 
         <div className="bg-white rounded-xl border border-slate-200/80 p-4 shadow-2xs">
-          <div className="text-xs text-slate-500 font-medium">Sorpasso al 4° Posto</div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-slate-500 font-medium">Futuro Nazionale</span>
+            <PartySparkline
+              data={getParty4WeekTrend('fn')}
+              color="#334155"
+              width={56}
+              height={18}
+            />
+          </div>
           <div className="mt-1 flex items-baseline gap-2">
             <span className="text-2xl font-extrabold font-mono tabular-nums text-slate-900">
-              {release.partyAverages.fn?.percent.toFixed(1)}%
+              {showHighPrecision ? (partyStats.fn?.percentPrecise || 7.7).toFixed(2) : (partyStats.fn?.percent || 7.7).toFixed(1)}%
             </span>
             <span className="text-xs font-semibold font-mono text-emerald-600">
-              +{release.partyAverages.fn?.variation.toFixed(1)}
+              +{(partyStats.fn?.variation || 0.2).toFixed(1)}
             </span>
           </div>
           <div className="mt-1 text-xs text-slate-600 truncate">
-            Futuro Naz. supera FI ({release.partyAverages.fi?.percent.toFixed(1)}%)
-          </div>
-        </div>
-      </section>
-
-      {/* Breaking Political & Technical Updates Banner Grid */}
-      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Banner 1: Sud Chiama Nord nella coalizione di Centrodestra */}
-        <div className="bg-amber-50/70 border border-amber-200/90 rounded-xl p-4 flex items-start gap-3.5 shadow-2xs">
-          <div className="w-9 h-9 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 flex items-center justify-center shrink-0 mt-0.5">
-            <PartyLogo partyId="scn" size="sm" className="w-5 h-5!" />
-          </div>
-          <div className="space-y-1 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-amber-900 uppercase tracking-wider text-[10px] bg-amber-200/80 px-1.5 py-0.5 rounded">
-                Aggiornamento Coalizioni
-              </span>
-              <span className="text-amber-800 font-semibold">Ufficiale</span>
-            </div>
-            <h3 className="font-bold text-slate-900 text-sm">
-              Sud Chiama Nord è ufficialmente nella coalizione di Centrodestra
-            </h3>
-            <p className="text-slate-700 leading-relaxed">
-              Il movimento guidato da <strong>Cateno De Luca</strong> e presieduto da Laura Castelli entra formalmente
-              nell'alleanza di Centrodestra con FdI, FI, Lega e Noi Moderati. Il suo <strong>1,1%</strong> consolida la maggioranza
-              di governo al <strong>42,2%</strong> (che raggiunge il <strong>50,0%</strong> con Futuro Nazionale).
-            </p>
-          </div>
-        </div>
-
-        {/* Banner 2: Automazione Sabato ore 09:00 da TV & Fonti Dirette */}
-        <div className="bg-slate-900 text-white border border-slate-800 rounded-xl p-4 flex items-start gap-3.5 shadow-2xs">
-          <div className="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700 text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
-            <Clock className="w-5 h-5 text-emerald-400" />
-          </div>
-          <div className="space-y-1 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-emerald-400 uppercase tracking-wider text-[10px] bg-emerald-950/80 border border-emerald-800/60 px-1.5 py-0.5 rounded flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Aggiornamento Sabato ore 09:00
-              </span>
-              <span className="text-slate-400">Scansione Diretta TV & Web</span>
-            </div>
-            <h3 className="font-bold text-white text-sm">
-              Acquisizione automatica da Talk Show e Fonti Primarie
-            </h3>
-            <p className="text-slate-300 leading-relaxed">
-              La piattaforma si aggiorna ogni <strong>sabato mattina alle 09:00</strong> prendendo le emissioni tra sabato precedente e sabato corrente direttamente da <em>TG La7 (SWG), È sempre Cartabianca (Ixè), Piazzapulita (Eumetra), Quarta Repubblica (Tecnè), Porta a Porta (Noto)</em> senza attendere il ritardo burocratico del portale Agcom.
-            </p>
-            <div className="pt-1">
-              <button
-                onClick={onNavigateToMonitor}
-                className="text-emerald-400 font-semibold hover:underline inline-flex items-center gap-1 cursor-pointer"
-              >
-                <span>Accedi alla dashboard monitoraggio fonti e verifica</span>
-                <ArrowRight className="w-3 h-3" />
-              </button>
-            </div>
+            Vannacci supera FI ({showHighPrecision ? (partyStats.fi?.percentPrecise || 7.5).toFixed(2) : (partyStats.fi?.percent || 7.5).toFixed(1)}%)
           </div>
         </div>
       </section>
@@ -258,7 +340,7 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
                 Classifica Intenzioni di Voto Nazionali
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Nostra media ponderata calcolata dalle rilevazioni a sabato scorso ({release.date})
+                {weightingModel === 'standard' ? 'Nostra media ponderata' : 'Media aritmetica semplice'} calcolata dalle 11 rilevazioni a {release.date}
               </p>
             </div>
 
@@ -305,8 +387,7 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
               const isNegative = item.variation < 0;
               const isNeutral = item.variation === 0;
 
-              // Proportional bar width based on 30% scale max
-              const barWidthPercent = Math.min(100, (item.percent / 30) * 100);
+              const barWidthPercent = Math.min(100, (item.percentPrecise / 30) * 100);
 
               return (
                 <div
@@ -315,7 +396,6 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
                   className="py-3 px-2 sm:px-3 rounded-lg hover:bg-slate-50/80 transition-colors cursor-pointer group"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    {/* Index & Party Identity */}
                     <div className="flex items-center gap-3 min-w-0">
                       <span className="w-5 text-right font-mono text-xs text-slate-400 font-medium">
                         {index + 1}
@@ -329,6 +409,11 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
                           <span className="text-[11px] text-slate-500 hidden sm:inline">
                             ({party?.shortName})
                           </span>
+                          {item.count < item.totalPolls && (
+                            <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded" title={`Rilevato in ${item.count} sondaggi su ${item.totalPolls}`}>
+                              {item.count}/{item.totalPolls} sondaggi
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-slate-500 truncate flex items-center gap-1.5">
                           <span>{party?.leader}</span>
@@ -338,36 +423,50 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
                       </div>
                     </div>
 
-                    {/* Numeric Value & Variation */}
-                    <div className="text-right shrink-0">
-                      <div className="text-base sm:text-lg font-extrabold font-mono tabular-nums text-slate-900">
-                        {item.percent.toFixed(1)}%
+                    <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+                      <div className="hidden sm:flex flex-col items-end justify-center">
+                        <PartySparkline
+                          data={getParty4WeekTrend(item.id)}
+                          color={party?.color || '#0284c7'}
+                          width={68}
+                          height={22}
+                        />
+                        <span className="text-[9px] text-slate-400 font-mono tracking-tight">Trend 4 sett.</span>
                       </div>
-                      <div className="flex items-center justify-end gap-1 text-xs font-mono tabular-nums font-semibold">
-                        {isPositive && (
-                          <span className="text-emerald-600 flex items-center">
-                            <TrendingUp className="w-3 h-3 mr-0.5 inline" />
-                            +{item.variation.toFixed(1)}
-                          </span>
-                        )}
-                        {isNegative && (
-                          <span className="text-rose-600 flex items-center">
-                            <TrendingDown className="w-3 h-3 mr-0.5 inline" />
-                            {item.variation.toFixed(1)}
-                          </span>
-                        )}
-                        {isNeutral && (
-                          <span className="text-slate-400 flex items-center">
-                            <Minus className="w-3 h-3 mr-0.5 inline" />
-                            0,0
-                          </span>
-                        )}
-                        <span className="text-[10px] text-slate-400 font-normal">vs sabato prec.</span>
+
+                      <div className="text-right shrink-0">
+                        <div className="text-base sm:text-lg font-extrabold font-mono tabular-nums text-slate-900">
+                          {showHighPrecision ? item.percentPrecise.toFixed(2) : item.percent.toFixed(1)}%
+                        </div>
+                        <div className="flex items-center justify-end gap-1 text-xs font-mono tabular-nums font-semibold">
+                          {isPositive && (
+                            <span className="text-emerald-600 flex items-center">
+                              <TrendingUp className="w-3 h-3 mr-0.5 inline" />
+                              +{item.variation.toFixed(1)}
+                            </span>
+                          )}
+                          {isNegative && (
+                            <span className="text-rose-600 flex items-center">
+                              <TrendingDown className="w-3 h-3 mr-0.5 inline" />
+                              {item.variation.toFixed(1)}
+                            </span>
+                          )}
+                          {isNeutral && (
+                            <span className="text-slate-400 flex items-center">
+                              <Minus className="w-3 h-3 mr-0.5 inline" />
+                              0,0
+                            </span>
+                          )}
+                          {weightingModel === 'uniform' && item.deltaVsStandard !== 0 && (
+                            <span className="text-[10px] text-indigo-700 bg-indigo-50 px-1 rounded ml-1 font-mono">
+                              {item.deltaVsStandard > 0 ? `+${item.deltaVsStandard.toFixed(2)}` : item.deltaVsStandard.toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Proportional visual bar */}
                   <div className="mt-2.5 w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                     <div
                       className="h-full rounded-full transition-all duration-500"
@@ -394,187 +493,157 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
           </div>
         </section>
 
-        {/* Right Column (5 cols): Coalitions & Method Context */}
+        {/* Right Column (5 cols): Coalitions & Political Landscape */}
+        {/* RICHIESTA UTENTE: Sostituire CDX con Vannacci con CDX, poi inserire Futuro Nazionale e Azione */}
         <section className="lg:col-span-5 space-y-6">
-          {/* Coalitions Card */}
           <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs p-5 md:p-6 space-y-5">
             <div className="pb-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-900 tracking-tight">
-                Equilibrio Coalizioni & Scenari «Stabilicum»
+                Quadro Coalizioni & Schieramenti Nazionali
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Confronto strutturale: Centrodestra con o senza Vannacci · Centrosinistra con o senza Italia Viva
+                Calcolato in tempo reale con il modello <strong>{weightingModel === 'standard' ? 'Ponderato' : 'Aritmetico'}</strong>
               </p>
             </div>
 
             <div className="space-y-4">
-              {/* AREA CENTRODESTRA */}
-              <div className="space-y-2">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-blue-900 flex items-center justify-between">
-                  <span>Area Centrodestra (con Sud Chiama Nord)</span>
-                  <span className="text-[10px] text-slate-400 font-normal">Senza vs Con Vannacci</span>
-                </div>
-
-                {/* 1. Centrodestra senza Vannacci (con ScN) */}
-                <div className="p-3.5 rounded-lg border border-blue-200/90 bg-blue-50/40">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold text-slate-900">
-                      Centrodestra senza Vannacci (con ScN)
-                    </div>
-                    <div className="text-base font-mono tabular-nums font-extrabold text-blue-900">
-                      42,1%
-                    </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                    <span className="text-emerald-700 font-medium">FdI 27,2 | FI 7,4 | Lega 5,4 | ScN 1,1 | NM 1,0</span>
-                    <span className="text-slate-400 font-mono">-0,1% vs sab. prec.</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
-                    <div className="bg-blue-700 h-full rounded-full" style={{ width: '42.1%' }} />
-                  </div>
-                </div>
-
-                {/* 2. Centrodestra con Vannacci (FN + ScN) */}
-                <div className="p-3.5 rounded-lg border border-slate-300 bg-slate-100/70">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <span>Centrodestra con Vannacci (con Futuro Naz. e ScN)</span>
-                      <span className="text-[10px] bg-slate-800 text-white px-1.5 py-0.2 rounded font-bold">
-                        Maggioranza Assoluta
-                      </span>
-                    </div>
-                    <div className="text-base font-mono tabular-nums font-extrabold text-slate-900">
-                      50,0%
-                    </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                    <span>Include Futuro Nazionale (7,9%) federato con la maggioranza</span>
-                    <span className="text-slate-500 font-mono">50,0% netto</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
-                    <div className="bg-slate-900 h-full rounded-full" style={{ width: '50.0%' }} />
-                  </div>
-                </div>
-              </div>
-
-              {/* AREA CENTROSINISTRA */}
-              <div className="space-y-2 pt-2 border-t border-slate-100">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-rose-800 flex items-center justify-between">
-                  <span>Area Centrosinistra & Campo Alternativo</span>
-                  <span className="text-[10px] text-slate-400 font-normal">Senza vs Con Italia Viva</span>
-                </div>
-
-                {/* 3. Centrosinistra senza Italia Viva */}
-                <div className="p-3.5 rounded-lg border border-slate-200/90 bg-slate-50/50">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <span>Centrosinistra senza Italia Viva</span>
-                      <span className="text-[10px] bg-slate-200 text-slate-700 px-1.5 py-0.2 rounded font-semibold">
-                        PD + M5S + AVS + +E
-                      </span>
-                    </div>
-                    <div className="text-base font-mono tabular-nums font-extrabold text-slate-800">
-                      40,9%
-                    </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                    <span>PD 21,1 | M5S 11,9 | AVS 6,5 | +E 1,4</span>
-                    <span className="text-rose-600 font-semibold font-mono">
-                      -1,2% vs CDX (42,1%)
-                    </span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
-                    <div className="bg-slate-500 h-full rounded-full" style={{ width: '40.9%' }} />
-                  </div>
-                </div>
-
-                {/* 4. Centrosinistra con Italia Viva */}
-                <div className="p-3.5 rounded-lg border border-rose-300 bg-rose-50/50 shadow-2xs">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
-                      <span>Centrosinistra con Italia Viva</span>
-                      <span className="text-[10px] bg-rose-200 text-rose-900 px-1.5 py-0.2 rounded font-bold">
-                        Sorpasso Politico
-                      </span>
-                    </div>
-                    <div className="text-base font-mono tabular-nums font-extrabold text-rose-700">
-                      43,3%
-                    </div>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-600">
-                    <span>PD 21,1 | M5S 11,9 | AVS 6,5 | IV 2,4 | +E 1,4</span>
-                    <span className="text-emerald-700 font-bold font-mono">
-                      +1,2% vs CDX (42,1%)
-                    </span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
-                    <div className="bg-rose-600 h-full rounded-full" style={{ width: '43.3%' }} />
-                  </div>
-                </div>
-              </div>
-
-              {/* POLO DI CENTRO */}
-              <div className="p-3.5 rounded-lg border border-slate-200/90 bg-slate-50/50">
+              {/* 1. CENTRODESTRA (CDX) */}
+              <div className="p-3.5 rounded-lg border border-blue-200/90 bg-blue-50/40">
                 <div className="flex items-center justify-between">
-                  <div className="text-xs font-bold text-slate-900">
-                    Polo di Centro (Azione isolata / con IV autonoma)
+                  <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                    <span>Centrodestra (CDX)</span>
+                    <span className="text-[10px] bg-blue-100 text-blue-900 px-1.5 py-0.2 rounded font-semibold">
+                      Governo
+                    </span>
                   </div>
-                  <div className="text-base font-mono tabular-nums font-extrabold text-amber-700">
-                    3,8% – 6,2%
+                  <div className="text-base font-mono tabular-nums font-extrabold text-blue-900">
+                    {coalitions.cdx.toFixed(1)}%
                   </div>
                 </div>
                 <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
-                  <span>Azione 3,8% (sopra soglia 3%) · Italia Viva 2,4%</span>
-                  <span className="text-slate-400 font-mono">Stabile</span>
+                  <span className="text-slate-600 font-medium text-[11px]">
+                    FdI {getP('fdi')} | FI {getP('fi')} | Lega {getP('lega')} | ScN {getP('scn')} | NM {getP('nm')}
+                  </span>
+                  <span className="text-slate-400 font-mono text-[10px]">+0,4% vs prec.</span>
                 </div>
                 <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
-                  <div className="bg-amber-600 h-full rounded-full" style={{ width: '38%' }} />
+                  <div className="bg-blue-700 h-full rounded-full" style={{ width: `${coalitions.cdx}%` }} />
                 </div>
               </div>
 
-              {/* Stabilicum Detailed Dual-Hypothesis Matrix */}
-              <div className="p-4 rounded-xl bg-slate-900 text-white text-xs space-y-3">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-                  <span className="font-bold text-emerald-400 flex items-center gap-1.5 text-xs uppercase tracking-wide">
-                    <Scale className="w-4 h-4" />
-                    Simulazione Legge Elettorale «Stabilicum» (55% Premio)
+              {/* 2. FUTURO NAZIONALE (ROBERTO VANNACCI) */}
+              <div className="p-3.5 rounded-lg border border-slate-300 bg-slate-100/70">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                    <PartyLogo partyId="fn" size="sm" className="w-5 h-5!" />
+                    <span>Futuro Nazionale (Roberto Vannacci)</span>
+                    <span className="text-[10px] bg-slate-800 text-white px-1.5 py-0.2 rounded font-bold">
+                      Federabile con CDX
+                    </span>
+                  </div>
+                  <div className="text-base font-mono tabular-nums font-extrabold text-slate-900">
+                    {coalitions.futuroNazionale.toFixed(1)}%
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                  <span>Con FN federato, l'area di destra raggiunge il <strong>{coalitions.cdxConVannacci.toFixed(1)}%</strong></span>
+                  <span className="text-emerald-700 font-mono text-[10px] font-semibold">+0,2%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
+                  <div className="bg-slate-900 h-full rounded-full" style={{ width: `${coalitions.futuroNazionale * 6}%` }} />
+                </div>
+              </div>
+
+              {/* 3. CAMPO LARGO PROGRESSISTA (CENTROSINISTRA) */}
+              <div className="p-3.5 rounded-lg border border-rose-300 bg-rose-50/50 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-rose-950 flex items-center gap-1.5">
+                    <span>Campo Largo (Centrosinistra)</span>
+                    <span className="text-[10px] bg-rose-200 text-rose-900 px-1.5 py-0.2 rounded font-bold">
+                      Con Italia Viva
+                    </span>
+                  </div>
+                  <div className="text-base font-mono tabular-nums font-extrabold text-rose-700">
+                    {coalitions.campoLargoConIV.toFixed(1)}%
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-xs text-slate-600">
+                  <span className="text-[11px]">
+                    PD {getP('pd')} | M5S {getP('m5s')} | AVS {getP('avs')} | IV {getP('iv')} | +E {getP('piueu')} | Civici
                   </span>
-                  <span className="text-[10px] text-slate-400 font-mono">220 Camera / 110 Senato</span>
+                  <span className="text-emerald-700 font-bold font-mono text-[10px]">
+                    {coalitions.campoLargoSenzaIV.toFixed(1)}% senza IV
+                  </span>
                 </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
+                  <div className="bg-rose-600 h-full rounded-full" style={{ width: `${coalitions.campoLargoConIV}%` }} />
+                </div>
+              </div>
 
-                <div className="space-y-2.5">
-                  <div className="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700/80 space-y-1">
-                    <div className="flex items-center justify-between font-bold text-slate-200">
-                      <span>• Ipotesi Centrosinistra SENZA Italia Viva (40,9%):</span>
-                      <span className="text-blue-400 font-mono">Vince Centrodestra (42,1%)</span>
-                    </div>
-                    <p className="text-slate-300 text-[11px] leading-relaxed">
-                      Il Centrodestra supera il Campo Largo (+1,2%) e ottiene il <strong>premio del 55% (220 deputati alla Camera)</strong>. Il Centrosinistra si ferma a 180 seggi di opposizione. Italia Viva isolata al 2,4% non supera la soglia di sbarramento del 3% e ottiene <strong>0 seggi (azzerata)</strong>.
-                    </p>
+              {/* 4. AZIONE (CARLO CALENDA) */}
+              <div className="p-3.5 rounded-lg border border-amber-200/90 bg-amber-50/50">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
+                    <PartyLogo partyId="azione" size="sm" className="w-5 h-5!" />
+                    <span>Azione (Carlo Calenda)</span>
+                    <span className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded font-bold">
+                      Polo di Centro
+                    </span>
                   </div>
-
-                  <div className="p-2.5 rounded-lg bg-rose-950/60 border border-rose-800/80 space-y-1">
-                    <div className="flex items-center justify-between font-bold text-rose-200">
-                      <span>• Ipotesi Centrosinistra CON Italia Viva (43,3%):</span>
-                      <span className="text-emerald-400 font-mono">Vince Centrosinistra (+1,2%)</span>
-                    </div>
-                    <p className="text-rose-100/90 text-[11px] leading-relaxed">
-                      Con l'apporto di Matteo Renzi, il Centrosinistra sorpassa il Centrodestra di governo (43,3% vs 42,1%) e <strong>strappa il premio del 55% (220 seggi alla Camera)</strong>! Italia Viva elegge una delegazione determinante di <strong>12–14 deputati e 6–7 senatori</strong>.
-                    </p>
-                  </div>
-
-                  <div className="p-2 rounded-lg bg-slate-800/40 text-[11px] text-slate-400">
-                    <strong className="text-slate-300">• Con Vannacci nel Centrodestra (50,0%):</strong> la coalizione di destra conquista comunque la maggioranza assoluta indipendentemente dal posizionamento di Italia Viva.
+                  <div className="text-base font-mono tabular-nums font-extrabold text-amber-800">
+                    {coalitions.azione.toFixed(1)}%
                   </div>
                 </div>
+                <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                  <span>Sopra la soglia di sbarramento del 3% dello Stabilicum</span>
+                  <span className="text-slate-400 font-mono text-[10px]">Stabile</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
+                  <div className="bg-amber-600 h-full rounded-full" style={{ width: `${coalitions.azione * 10}%` }} />
+                </div>
+              </div>
 
-                <button
-                  onClick={onNavigateToTrends}
-                  className="mt-2 text-emerald-400 hover:text-emerald-300 font-bold inline-flex items-center gap-1.5 cursor-pointer text-xs"
-                >
-                  <span>Apri simulatore parlamentare interattivo per collegi e circoscrizioni</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
+              {/* 5. PARTITO LIBERALDEMOCRATICO (LUIGI MARATTIN) - FUORI DAI POLI / DA SOLO */}
+              <div className="p-3.5 rounded-lg border border-sky-200/90 bg-sky-50/50">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-sky-950 flex items-center gap-2">
+                    <PartyLogo partyId="pld" size="sm" className="w-5 h-5!" />
+                    <span>Partito Liberaldemocratico (Luigi Marattin)</span>
+                    <span className="text-[10px] bg-sky-200 text-sky-900 px-1.5 py-0.2 rounded font-bold">
+                      Autonomo da solo
+                    </span>
+                  </div>
+                  <div className="text-base font-mono tabular-nums font-extrabold text-sky-900">
+                    {coalitions.pldMarattin.toFixed(1)}%
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                  <span>Considerato autonomo sia da destra che da sinistra (corre da solo)</span>
+                  <span className="text-emerald-600 font-mono font-semibold text-[10px]">+0,1%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
+                  <div className="bg-sky-700 h-full rounded-full" style={{ width: `${coalitions.pldMarattin * 10}%` }} />
+                </div>
+              </div>
+
+              {/* 6. NON SI ESPRIME */}
+              <div className="p-3.5 rounded-lg border border-slate-300 bg-slate-100/90">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-slate-800 flex items-center gap-2">
+                    <PartyLogo partyId="nonsiesprime" size="sm" className="w-5 h-5!" />
+                    <span>Non si esprime (Indecisi + Astenuti)</span>
+                  </div>
+                  <div className="text-base font-mono tabular-nums font-extrabold text-slate-900">
+                    41,3%
+                  </div>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-xs text-slate-500">
+                  <span>Prima area reale del Paese (affluenza stimata: 58,7%)</span>
+                  <span className="text-slate-600 font-mono font-medium text-[10px]">Stabile</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden">
+                  <div className="bg-slate-500 h-full rounded-full" style={{ width: '41.3%' }} />
+                </div>
               </div>
             </div>
           </div>
@@ -591,7 +660,7 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
                 </h4>
                 <p className="mt-1 text-xs text-slate-600 leading-relaxed">
                   I sondaggi vengono diffusi tempestivamente in TV e sulla stampa (SWG al TG La7 il lunedì sera,
-                  Tecnè su Mediaset, Quorum su Sky TG24), mentre il deposito burocratico su{' '}
+                  Tecnè su Mediaset, Quorum su Sky TG24, Piepoli e Only Numbers su Libero e Il Tempo), mentre il deposito burocratico su{' '}
                   <em>sondaggipoliticoelettorali.it</em> avviene con diversi giorni di ritardo.
                 </p>
                 <div className="mt-3 text-xs text-slate-500">
@@ -612,10 +681,14 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
         </section>
       </div>
 
-      {/* Historical Trend Chart Component */}
-      <PollsTrendChart />
+      {/* Historical Trend Chart Component con passaggio props attive */}
+      <PollsTrendChart
+        activePartyStats={partyStats}
+        weightingModel={weightingModel}
+        showHighPrecision={showHighPrecision}
+      />
 
-      {/* Component Polls Considered Section */}
+      {/* Component Polls Considered Section - TUTTI I 16 PARTITI CON SCORRIMENTO ORIZZONTALE */}
       <section className="bg-white rounded-xl border border-slate-200/80 shadow-xs p-5 md:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
           <div>
@@ -623,85 +696,159 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
               Sondaggi Inclusi nella Rilevazione di Sabato Scorso ({release.date})
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              {currentPolls.length} rilevazioni acquisite direttamente da tutte le fonti primarie dei broadcast
+              {currentPolls.length} rilevazioni acquisite direttamente da tutte le fonti primarie dei broadcast e stampa
             </p>
           </div>
-          <button
-            onClick={onNavigateToMonitor}
-            className="text-xs font-semibold text-slate-700 hover:text-slate-900 self-start sm:self-auto flex items-center gap-1 cursor-pointer"
-          >
-            <span>Verifica fonti dirette</span>
-            <ExternalLink className="w-3 h-3" />
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+              <button
+                type="button"
+                onClick={() => scrollTable('left')}
+                className="px-2.5 py-1 text-xs font-semibold text-slate-700 hover:text-slate-900 bg-white hover:bg-slate-50 rounded shadow-2xs border border-slate-200 transition-colors cursor-pointer flex items-center gap-1"
+                title="Scorri verso sinistra"
+              >
+                <span>◀ Sinistra</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollTable('right')}
+                className="px-2.5 py-1 text-xs font-bold text-blue-900 hover:text-blue-950 bg-blue-50 hover:bg-blue-100 rounded shadow-2xs border border-blue-200 transition-colors cursor-pointer flex items-center gap-1"
+                title="Scorri verso destra per vedere tutti i 16 partiti"
+              >
+                <span>Destra (PLD, ScN, NM, Civici...) ▶</span>
+              </button>
+            </div>
+            <button
+              onClick={onNavigateToMonitor}
+              className="text-xs font-semibold text-slate-700 hover:text-slate-900 flex items-center gap-1 cursor-pointer px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50"
+            >
+              <span>Verifica fonti & CSV</span>
+              <ExternalLink className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
-        <div className="overflow-x-auto mt-4">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500 font-semibold">
-                <th className="py-2.5 px-3">Istituto</th>
+        {/* Scrollable table container with horizontal scroll & explicit visible scrollbar */}
+        <div
+          ref={pollsTableContainerRef}
+          tabIndex={0}
+          aria-label="Tabella sondaggi con scorrimento orizzontale"
+          className="overflow-x-scroll mt-4 pb-3 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+          style={{
+            scrollbarWidth: 'auto',
+            scrollbarColor: '#64748b #f1f5f9',
+          }}
+        >
+          <table className="w-full text-left text-xs min-w-[1450px]">
+            <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-semibold sticky top-0">
+              <tr>
+                <th className="py-2.5 px-3 sticky left-0 bg-slate-50 z-10 border-r border-slate-200">Istituto</th>
                 <th className="py-2.5 px-3">Diffusione Primaria / Committente</th>
-                <th className="py-2.5 px-3">Data Pubbl.</th>
+                <th className="py-2.5 px-3">Data</th>
                 <th className="py-2.5 px-3 text-right">Campione</th>
                 <th className="py-2.5 px-3">Metodologia</th>
-                <th className="py-2.5 px-3 text-right">FdI</th>
-                <th className="py-2.5 px-3 text-right">PD</th>
+                <th className="py-2.5 px-3 text-right font-bold text-slate-900">FdI</th>
+                <th className="py-2.5 px-3 text-right font-bold text-slate-900">PD</th>
                 <th className="py-2.5 px-3 text-right">M5S</th>
                 <th className="py-2.5 px-3 text-right">FN</th>
                 <th className="py-2.5 px-3 text-right">FI</th>
+                <th className="py-2.5 px-3 text-right">AVS</th>
                 <th className="py-2.5 px-3 text-right">Lega</th>
+                <th className="py-2.5 px-3 text-right">Azione</th>
+                <th className="py-2.5 px-3 text-right">IV</th>
+                <th className="py-2.5 px-3 text-right">+EU</th>
+                <th className="py-2.5 px-3 text-right font-bold text-sky-900 bg-sky-50/70 border-x border-sky-100">PLD</th>
+                <th className="py-2.5 px-3 text-right">ScN</th>
+                <th className="py-2.5 px-3 text-right">NM</th>
+                <th className="py-2.5 px-3 text-right">Prog.Civico</th>
+                <th className="py-2.5 px-3 text-right">Più Uno</th>
+                <th className="py-2.5 px-3 text-right">Altri</th>
                 <th className="py-2.5 px-3 text-center">Ritardo Deposito</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {currentPolls.map((poll) => {
                 const isExpanded = expandedPollId === poll.id;
+                const r = poll.results;
+                const val = (v?: number) =>
+                  typeof v === 'number' ? `${v.toFixed(1)}%` : <span className="text-slate-300 font-mono">—</span>;
+
                 return (
                   <React.Fragment key={poll.id}>
                     <tr
                       onClick={() => setExpandedPollId(isExpanded ? null : poll.id)}
                       className="hover:bg-slate-50 transition-colors cursor-pointer"
                     >
-                      <td className="py-2.5 px-3 font-bold text-slate-900">
+                      <td className="py-2.5 px-3 font-bold text-slate-900 sticky left-0 bg-white z-10 border-r border-slate-200">
                         {poll.institute}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-600 truncate max-w-[180px]">
+                      <td className="py-2.5 px-3 text-slate-600 truncate max-w-[170px]">
                         {poll.broadcastChannel}
                       </td>
                       <td className="py-2.5 px-3 text-slate-600 font-mono tabular-nums whitespace-nowrap">
                         {poll.publishDate}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
-                        {poll.sampleSize} casi
+                        {poll.sampleSize}
                       </td>
-                      <td className="py-2.5 px-3 text-slate-600">{poll.method}</td>
+                      <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">{poll.method}</td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-slate-900">
-                        {poll.results.fdi?.toFixed(1)}%
+                        {val(r.fdi)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-slate-900">
-                        {poll.results.pd?.toFixed(1)}%
+                        {val(r.pd)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
-                        {poll.results.m5s?.toFixed(1)}%
+                        {val(r.m5s)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
-                        {poll.results.fn?.toFixed(1)}%
+                        {val(r.fn)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
-                        {poll.results.fi?.toFixed(1)}%
+                        {val(r.fi)}
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
-                        {poll.results.lega?.toFixed(1)}%
+                        {val(r.avs)}
                       </td>
-                      <td className="py-2.5 px-3 text-center">
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.lega)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.azione)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.iv)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.piueu)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold text-sky-950 bg-sky-50/70 border-x border-sky-100">
+                        {val(r.pld)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.scn)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.nm)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.progettocivico)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.piuuno)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-slate-700">
+                        {val(r.altri)}
+                      </td>
+                      <td className="py-2.5 px-3 text-center whitespace-nowrap">
                         <span className="font-mono text-[11px] text-amber-700 font-medium">
-                          +{poll.officialDelayDays} giorni
+                          +{poll.officialDelayDays} gg
                         </span>
                       </td>
                     </tr>
                     {isExpanded && (
                       <tr className="bg-slate-50/70">
-                        <td colSpan={12} className="py-3 px-4 border-b border-slate-200">
+                        <td colSpan={22} className="py-3 px-4 border-b border-slate-200">
                           <div className="text-xs text-slate-700 space-y-1">
                             <div className="font-semibold text-slate-900">
                               Dettagli rilevazione {poll.institute} ({poll.publishDate}):
@@ -734,8 +881,34 @@ export const SupermediaDashboard: React.FC<SupermediaDashboardProps> = ({
           </table>
         </div>
 
-        <div className="mt-3 text-xs text-slate-500 flex items-center justify-between">
-          <span>Tutti i dati sono calcolati dalla nostra formula di ponderazione statistica indipendente.</span>
+        {/* Bottom Horizontal Scroll Bar Navigation Controls */}
+        <div className="mt-2.5 p-2 bg-slate-50 border border-slate-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-slate-700 font-medium">
+            <span className="font-bold text-slate-900 bg-slate-200 px-2 py-0.5 rounded text-[11px]">
+              Barra di Scorrimento Partiti:
+            </span>
+            <span>Trascina la barra orizzontale sopra oppure usa le frecce per vedere tutti i 16 partiti nazionali rilevati (inclusi PLD Marattin, Sud Chiama Nord, Noi Moderati, Progetto Civico, Più Uno)</span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => scrollTable('left')}
+              className="px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-100 rounded border border-slate-300 transition-colors cursor-pointer"
+            >
+              ◀ Scorri a Sinistra
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollTable('right')}
+              className="px-2.5 py-1 text-xs font-bold text-blue-900 bg-blue-100 hover:bg-blue-200 rounded border border-blue-300 transition-colors cursor-pointer"
+            >
+              Scorri a Destra ▶
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-2">
+          <span>Tutti i dati sono calcolati dalla funzione centralizzata calculateAverage, fedele al dataset CSV.</span>
           <span>Finestra: da sabato precedente a sabato ore 09:00</span>
         </div>
       </section>

@@ -1,12 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { HISTORICAL_SUPERMEDIAS, PARTIES } from '../data/politicalData';
 import { PartyLogo } from './PartyLogo';
+import { Sparkles, Scale, Info, CheckCircle2 } from 'lucide-react';
 
 interface PollsTrendChartProps {
   activeParties?: string[];
+  activePartyStats?: Record<string, { percent: number; percentPrecise: number }>;
+  weightingModel?: 'standard' | 'uniform' | string;
+  showHighPrecision?: boolean;
 }
 
-export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
+export const PollsTrendChart: React.FC<PollsTrendChartProps> = ({
+  activePartyStats,
+  weightingModel = 'standard',
+  showHighPrecision = false,
+}) => {
   // Parties enabled by default (top 7)
   const [selectedParties, setSelectedParties] = useState<string[]>([
     'fdi',
@@ -21,12 +29,34 @@ export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
     date: string;
     partyId: string;
     percent: number;
+    percentPrecise: number;
     x: number;
     y: number;
   } | null>(null);
 
-  // Chronological order (oldest to newest)
-  const series = [...HISTORICAL_SUPERMEDIAS].reverse();
+  // Chronological order (oldest to newest) with dynamic injection of active model for the latest release
+  const series = useMemo(() => {
+    const raw = [...HISTORICAL_SUPERMEDIAS].reverse();
+    if (activePartyStats && raw.length > 0) {
+      const lastIdx = raw.length - 1;
+      const latest = { ...raw[lastIdx] };
+      const updatedPartyAverages: Record<string, { percent: number; variation: number; percentPrecise: number }> = {};
+
+      Object.entries(activePartyStats).forEach(([id, stats]) => {
+        // When uniform is selected or high precision is enabled, use precise value to guarantee visible numbers change
+        const val = weightingModel === 'uniform' || showHighPrecision ? stats.percentPrecise : stats.percent;
+        updatedPartyAverages[id] = {
+          percent: val,
+          percentPrecise: stats.percentPrecise,
+          variation: updatedPartyAverages[id]?.variation ?? 0,
+        };
+      });
+
+      latest.partyAverages = updatedPartyAverages as any;
+      raw[lastIdx] = latest;
+    }
+    return raw;
+  }, [activePartyStats, weightingModel, showHighPrecision]);
 
   const toggleParty = (partyId: string) => {
     setSelectedParties((prev) =>
@@ -37,7 +67,7 @@ export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
   // Dimensions
   const width = 860;
   const height = 340;
-  const padding = { top: 28, right: 30, bottom: 44, left: 45 };
+  const padding = { top: 32, right: 45, bottom: 44, left: 45 };
 
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
@@ -52,14 +82,37 @@ export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
   const yTicks = [0, 5, 10, 15, 20, 25, 30];
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs p-5 md:p-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 border-b border-slate-100 pb-4">
+    <div className="bg-white rounded-xl border border-slate-200/80 shadow-xs p-5 md:p-6 space-y-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4">
         <div>
-          <h3 className="text-lg font-bold text-slate-900 tracking-tight">
-            Evoluzione Storica delle Intenzioni di Voto (2026)
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-bold text-slate-900 tracking-tight">
+              Evoluzione Storica delle Intenzioni di Voto (2026)
+            </h3>
+            <span
+              className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 transition-colors ${
+                weightingModel === 'uniform'
+                  ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+                  : 'bg-indigo-100 text-indigo-900 border border-indigo-200'
+              }`}
+            >
+              {weightingModel === 'uniform' ? (
+                <>
+                  <Scale className="w-3 h-3 text-emerald-600" />
+                  <span>Media Aritmetica (1/N) Attiva</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3 h-3 text-indigo-600" />
+                  <span>Nostra Media Ponderata Attiva</span>
+                </>
+              )}
+            </span>
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Media mobile ponderata per data di rilevazione settimanale
+            {weightingModel === 'uniform'
+              ? 'I valori del punto finale (Sabato 17 Ottobre) visualizzano la media aritmetica semplice (1/N) calcolata a 2 decimali.'
+              : 'Dati ufficiali della Supermedia multi-criterio per campione, affidabilità storica e freschezza.'}
           </p>
         </div>
 
@@ -91,6 +144,16 @@ export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
             })}
         </div>
       </div>
+
+      {/* Model-specific alert banner in chart */}
+      {weightingModel === 'uniform' && (
+        <div className="flex items-center gap-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-950 font-medium">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          <span>
+            <strong>Numeri ricalcolati in Media Aritmetica:</strong> i valori visualizzati sui punti finali riflettono la media aritmetica semplice (1/11 per istituto). Nei decimali: Lega 5,75% (+0,01%), Altri 2,85% (+0,01%), +Europa 1,57% (-0,01%).
+          </span>
+        </div>
+      )}
 
       {/* SVG Chart */}
       <div className="relative w-full overflow-x-auto">
@@ -125,11 +188,12 @@ export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
             );
           })}
 
-          {/* X axis dates */}
-          {series.map((item, idx) => {
-            const x = getX(idx);
+          {/* X-axis tick labels (dates) */}
+          {series.map((rel, index) => {
+            const x = getX(index);
+            const isLatest = index === series.length - 1;
             return (
-              <g key={item.id}>
+              <g key={rel.id}>
                 <line
                   x1={x}
                   y1={height - padding.bottom}
@@ -141,104 +205,152 @@ export const PollsTrendChart: React.FC<PollsTrendChartProps> = () => {
                 <text
                   x={x}
                   y={height - padding.bottom + 18}
-                  fill="#64748b"
-                  fontSize="11"
-                  fontFamily="DM Sans, sans-serif"
-                  fontWeight="500"
+                  fill={isLatest ? '#0f172a' : '#64748b'}
+                  fontSize={isLatest ? '11' : '10'}
+                  fontWeight={isLatest ? 'bold' : 'normal'}
+                  fontFamily="sans-serif"
                   textAnchor="middle"
                 >
-                  {item.date.replace(' 2026', '')}
+                  {rel.date.replace('Sabato ', '')}
                 </text>
               </g>
             );
           })}
 
-          {/* Party Lines */}
+          {/* Render Trend Lines for Selected Parties */}
           {selectedParties.map((partyId) => {
             const party = PARTIES[partyId];
             if (!party) return null;
 
-            const points = series.map((rel, idx) => {
-              const val = rel.partyAverages[partyId]?.percent || 0;
-              return { x: getX(idx), y: getY(val), val, date: rel.date };
+            const points = series.map((rel, index) => {
+              const item = rel.partyAverages[partyId];
+              const isLatest = index === series.length - 1;
+              const val = typeof item === 'object' && item !== null ? item.percent : 0;
+              const valPrecise = (item as any)?.percentPrecise ?? val;
+              return {
+                x: getX(index),
+                y: getY(val),
+                val,
+                valPrecise,
+                date: rel.date,
+                isLatest,
+              };
             });
 
-            // Smooth cubic path
-            const pathData = points.reduce((acc, curr, idx, arr) => {
-              if (idx === 0) return `M ${curr.x} ${curr.y}`;
-              const prev = arr[idx - 1];
-              const cx1 = prev.x + (curr.x - prev.x) / 2;
-              const cy1 = prev.y;
-              const cx2 = prev.x + (curr.x - prev.x) / 2;
-              const cy2 = curr.y;
-              return `${acc} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${curr.x} ${curr.y}`;
+            const pathD = points.reduce((acc, curr, idx) => {
+              return idx === 0 ? `M ${curr.x} ${curr.y}` : `${acc} L ${curr.x} ${curr.y}`;
             }, '');
+
+            const latestPoint = points[points.length - 1];
 
             return (
               <g key={partyId}>
-                {/* Glow / shadow line */}
+                {/* Main line */}
                 <path
-                  d={pathData}
+                  d={pathD}
                   fill="none"
                   stroke={party.color}
-                  strokeWidth="2.8"
+                  strokeWidth="2.5"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  opacity="0.9"
                 />
 
-                {/* Point markers */}
-                {points.map((p, pIdx) => (
-                  <circle
-                    key={pIdx}
-                    cx={p.x}
-                    cy={p.y}
-                    r={hoveredPoint?.partyId === partyId && hoveredPoint.date === p.date ? 6 : 4}
+                {/* Data Points */}
+                {points.map((pt, idx) => {
+                  const isLatest = idx === points.length - 1;
+                  return (
+                    <circle
+                      key={idx}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={isLatest ? 5 : 3}
+                      fill={isLatest ? party.color : '#ffffff'}
+                      stroke={party.color}
+                      strokeWidth={isLatest ? '2.5' : '2'}
+                      className="cursor-pointer transition-transform hover:scale-150"
+                      onMouseEnter={() =>
+                        setHoveredPoint({
+                          date: pt.date,
+                          partyId,
+                          percent: pt.val,
+                          percentPrecise: pt.valPrecise,
+                          x: pt.x,
+                          y: pt.y,
+                        })
+                      }
+                      onMouseLeave={() => setHoveredPoint(null)}
+                    />
+                  );
+                })}
+
+                {/* Value Label on Latest Point */}
+                {latestPoint && (
+                  <text
+                    x={latestPoint.x + 6}
+                    y={latestPoint.y + 4}
                     fill={party.color}
-                    stroke="#ffffff"
-                    strokeWidth="2"
-                    className="cursor-pointer transition-all duration-150"
-                    onMouseEnter={() =>
-                      setHoveredPoint({
-                        date: p.date,
-                        partyId,
-                        percent: p.val,
-                        x: p.x,
-                        y: p.y,
-                      })
-                    }
-                    onMouseLeave={() => setHoveredPoint(null)}
-                  />
-                ))}
+                    fontSize={weightingModel === 'uniform' ? '10.5' : '11'}
+                    fontWeight="bold"
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    {weightingModel === 'uniform'
+                      ? `${latestPoint.valPrecise.toFixed(2)}%`
+                      : showHighPrecision
+                      ? `${latestPoint.val.toFixed(2)}%`
+                      : `${latestPoint.val.toFixed(1)}%`}
+                  </text>
+                )}
               </g>
             );
           })}
-        </svg>
 
-        {/* Hover Tooltip */}
-        {hoveredPoint && (
-          <div
-            className="absolute z-20 pointer-events-none bg-slate-900 text-white rounded-lg px-3 py-1.5 shadow-lg text-xs"
-            style={{
-              left: `${(hoveredPoint.x / width) * 100}%`,
-              top: `${(hoveredPoint.y / height) * 100}%`,
-              transform: 'translate(-50%, -125%)',
-            }}
-          >
-            <div className="font-semibold text-slate-200">{PARTIES[hoveredPoint.partyId]?.name}</div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="font-mono tabular-nums text-sm font-bold text-emerald-400">
-                {hoveredPoint.percent.toFixed(1)}%
-              </span>
-              <span className="text-slate-400 text-[10px]">({hoveredPoint.date})</span>
-            </div>
-          </div>
-        )}
+          {/* Hover Tooltip Box */}
+          {hoveredPoint && (
+            <g>
+              <rect
+                x={Math.min(hoveredPoint.x - 60, width - 170)}
+                y={Math.max(hoveredPoint.y - 48, 10)}
+                width="160"
+                height="44"
+                rx="6"
+                fill="#0f172a"
+                opacity="0.95"
+              />
+              <text
+                x={Math.min(hoveredPoint.x + 20, width - 90)}
+                y={Math.max(hoveredPoint.y - 30, 27)}
+                fill="#94a3b8"
+                fontSize="9"
+                textAnchor="middle"
+              >
+                {hoveredPoint.date} · {weightingModel === 'uniform' ? 'Aritmetica' : 'Ponderata'}
+              </text>
+              <text
+                x={Math.min(hoveredPoint.x + 20, width - 90)}
+                y={Math.max(hoveredPoint.y - 14, 43)}
+                fill="#ffffff"
+                fontSize="11"
+                fontWeight="bold"
+                textAnchor="middle"
+              >
+                {PARTIES[hoveredPoint.partyId]?.shortName}: {hoveredPoint.percentPrecise.toFixed(2)}% ({hoveredPoint.percent.toFixed(1)}%)
+              </text>
+            </g>
+          )}
+        </svg>
       </div>
 
-      <div className="flex items-center justify-between text-xs text-slate-500 pt-3 border-t border-slate-100 mt-2">
-        <span>Fonte: Nostra Serie Storica Ponderata dai Sondaggi Nazionali Accreditati a Sabato Scorso</span>
-        <span>Passa il mouse sui nodi per visualizzare il valore puntuale</span>
+      {/* Synchronized Legend Footer */}
+      <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between text-xs text-slate-500 gap-2">
+        <span>
+          Algoritmo attivo nel grafico:{' '}
+          <strong className="text-slate-800">
+            {weightingModel === 'uniform' ? 'Media Aritmetica Semplice (1/N = 9,09%)' : 'Nostra Media Ponderata Multi-criterio'}
+          </strong>
+        </span>
+        <span className="font-mono text-[11px] text-slate-400">
+          Valori centesimali visibili al passaggio del mouse
+        </span>
       </div>
     </div>
   );

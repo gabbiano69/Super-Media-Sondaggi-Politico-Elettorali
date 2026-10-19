@@ -26,12 +26,10 @@ import { exportPollsToCSV } from '../utils/weightCalculator';
 import { PartyLogo } from './PartyLogo';
 
 interface InstitutesMonitorViewProps {
-  onOpenNewPollModal: () => void;
   activePolls: PollRecord[];
 }
 
 export const InstitutesMonitorView: React.FC<InstitutesMonitorViewProps> = ({
-  onOpenNewPollModal,
   activePolls,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -161,14 +159,6 @@ export const InstitutesMonitorView: React.FC<InstitutesMonitorViewProps> = ({
           >
             <Download className="w-3.5 h-3.5 text-slate-500" />
             <span>Esporta CSV</span>
-          </button>
-
-          <button
-            onClick={onOpenNewPollModal}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer shadow-2xs whitespace-nowrap"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span>Inserisci Rilevazione del Sabato</span>
           </button>
         </div>
       </div>

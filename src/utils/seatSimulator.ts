@@ -1,4 +1,4 @@
-export type ElectoralLaw = 'stabilicum' | 'rosatellum';
+export type ElectoralLaw = 'stabilicum';
 
 export interface SeatProjection {
   cameraSeats: number;
@@ -28,9 +28,9 @@ export interface SimulationSummary {
 }
 
 /**
- * Simulates Parliament Seats according to the chosen Electoral Law:
- * - 'stabilicum': Legge del Premierato con premio di maggioranza al 55% alla coalizione collegata al Premier più votato (220 seggi Camera, 110 seggi Senato), e il 45% proporzionale alle opposizioni (180 Camera, 90 Senato) con soglia 3%.
- * - 'rosatellum': Legge elettorale mista (37% uninominale maggioritario secco, 61% proporzionale, 2% circoscrizione estero).
+ * Simula i seggi parlamentari secondo la legge dello Stato «Stabilicum» (Premierato):
+ * - Premio di maggioranza del 55% alla coalizione collegata al candidato Premier più votato (220 seggi Camera, 110 seggi Senato)
+ * - Quota del 45% ripartita proporzionalmente tra le opposizioni che superano la soglia del 3% (180 seggi Camera, 90 seggi Senato)
  */
 export function simulateParliamentSeats(
   partyPercentages: Record<string, number>,
@@ -41,7 +41,7 @@ export function simulateParliamentSeats(
   const SENATO_TOTAL = 200;
   const THRESHOLD = 3.0;
 
-  // 1. Calculate coalition vote totals
+  // 1. Calcolo somme voti per coalizione
   const coalitionVoteSums: Record<string, number> = {
     governo: 0,
     campoLargo: 0,
@@ -56,264 +56,168 @@ export function simulateParliamentSeats(
 
   const results: Record<string, SeatProjection> = {};
 
-  if (law === 'stabilicum') {
-    // --- STABILICUM (Legge elettorale per l'elezione diretta del Premier) ---
-    // Premio di maggioranza del 55%:
-    // Camera: 220 seggi (55% di 400)
-    // Senato: 110 seggi (55% di 200)
-    // Quota opposizioni del 45%:
-    // Camera: 180 seggi (45% di 400)
-    // Senato: 90 seggi (45% di 200)
-    const CAMERA_PREMIO = 220;
-    const CAMERA_OPPOSIZIONE = 180;
-    const SENATO_PREMIO = 110;
-    const SENATO_OPPOSIZIONE = 90;
+  // --- STABILICUM (Legge dello Stato per l'elezione diretta del Premier) ---
+  const CAMERA_PREMIO = 220;
+  const CAMERA_OPPOSIZIONE = 180;
+  const SENATO_PREMIO = 110;
+  const SENATO_OPPOSIZIONE = 90;
 
-    // Determina la coalizione vincente al primo turno o al ballottaggio
-    let winningCoalition: 'governo' | 'campoLargo' | 'centro' | 'parita' = 'governo';
-    if (coalitionVoteSums.campoLargo > coalitionVoteSums.governo && coalitionVoteSums.campoLargo > coalitionVoteSums.centro) {
-      winningCoalition = 'campoLargo';
-    } else if (coalitionVoteSums.centro > coalitionVoteSums.governo && coalitionVoteSums.centro > coalitionVoteSums.campoLargo) {
-      winningCoalition = 'centro';
-    } else if (coalitionVoteSums.governo === coalitionVoteSums.campoLargo) {
-      winningCoalition = 'parita';
-    }
+  // Determina la coalizione vincente che ottiene il premio del 55%
+  let winningCoalition: 'governo' | 'campoLargo' | 'centro' | 'parita' = 'governo';
+  if (coalitionVoteSums.campoLargo > coalitionVoteSums.governo && coalitionVoteSums.campoLargo > coalitionVoteSums.centro) {
+    winningCoalition = 'campoLargo';
+  } else if (coalitionVoteSums.centro > coalitionVoteSums.governo && coalitionVoteSums.centro > coalitionVoteSums.campoLargo) {
+    winningCoalition = 'centro';
+  } else if (coalitionVoteSums.governo === coalitionVoteSums.campoLargo) {
+    winningCoalition = 'parita';
+  }
 
-    const winningCoalitionLabel =
-      winningCoalition === 'governo'
-        ? 'Centrodestra di Governo (Meloni)'
-        : winningCoalition === 'campoLargo'
-        ? 'Centrosinistra & M5S (Campo Largo)'
-        : 'Polo di Centro';
+  const winningCoalitionLabel =
+    winningCoalition === 'governo'
+      ? 'Centrodestra di Governo (Meloni)'
+      : winningCoalition === 'campoLargo'
+      ? 'Campo Largo Progressista'
+      : 'Polo di Centro';
 
-    // Ripartizione interna alla coalizione vincente che riceve il premio del 55%
-    const winningParties = Object.entries(partyPercentages).filter(
-      ([pId]) => coalitionMap[pId] === winningCoalition
-    );
-    const winningSum = winningParties.reduce((acc, [, pct]) => acc + pct, 0) || 1;
+  // Ripartizione interna alla coalizione vincente con premio del 55%
+  const winningParties = Object.entries(partyPercentages).filter(
+    ([pId]) => coalitionMap[pId] === winningCoalition
+  );
+  const winningSum = winningParties.reduce((acc, [, pct]) => acc + pct, 0) || 1;
 
-    winningParties.forEach(([pId, pct]) => {
-      const share = pct / winningSum;
-      const camSeats = Math.round(CAMERA_PREMIO * share);
-      const senSeats = Math.round(SENATO_PREMIO * share);
+  winningParties.forEach(([pId, pct]) => {
+    const share = pct / winningSum;
+    const camSeats = Math.round(CAMERA_PREMIO * share);
+    const senSeats = Math.round(SENATO_PREMIO * share);
 
+    results[pId] = {
+      cameraSeats: camSeats,
+      senatoSeats: senSeats,
+      percentage: pct,
+      passedThreshold: pct >= THRESHOLD || share >= 0.04, // In coalizione vincente concorrono anche liste alleate
+      status: 'Maggioranza',
+      electoralBonus: true,
+    };
+  });
+
+  // Ripartizione proporzionale del 45% (180 Camera / 90 Senato) per i partiti di opposizione
+  const oppositionParties = Object.entries(partyPercentages).filter(
+    ([pId]) => coalitionMap[pId] !== winningCoalition
+  );
+
+  // Solo i partiti che superano la soglia del 3% partecipano al riparto proporzionale di minoranza
+  const validOpposition = oppositionParties.filter(([, pct]) => pct >= THRESHOLD);
+  const validOppSum = validOpposition.reduce((acc, [, pct]) => acc + pct, 0) || 1;
+
+  validOpposition.forEach(([pId, pct]) => {
+    const share = pct / validOppSum;
+    const camSeats = Math.round(CAMERA_OPPOSIZIONE * share);
+    const senSeats = Math.round(SENATO_OPPOSIZIONE * share);
+    const cKey = coalitionMap[pId];
+
+    results[pId] = {
+      cameraSeats: camSeats,
+      senatoSeats: senSeats,
+      percentage: pct,
+      passedThreshold: true,
+      status: cKey === 'centro' ? 'Centro' : 'Opposizione',
+      electoralBonus: false,
+    };
+  });
+
+  // Partiti sotto soglia nelle opposizioni (0 seggi - esclusi dalla rappresentanza)
+  oppositionParties
+    .filter(([, pct]) => pct < THRESHOLD)
+    .forEach(([pId, pct]) => {
       results[pId] = {
-        cameraSeats: camSeats,
-        senatoSeats: senSeats,
+        cameraSeats: 0,
+        senatoSeats: 0,
         percentage: pct,
-        passedThreshold: pct >= THRESHOLD || share >= 0.05, // In coalizione vincente, anche alleati minori concorrono
-        status: 'Maggioranza',
-        electoralBonus: true,
-      };
-    });
-
-    // Ripartizione proporzionale del 45% (180 Camera / 90 Senato) per i partiti di opposizione
-    const oppositionParties = Object.entries(partyPercentages).filter(
-      ([pId]) => coalitionMap[pId] !== winningCoalition
-    );
-
-    // Solo i partiti che superano la soglia del 3% partecipano al riparto proporzionale di minoranza
-    const validOpposition = oppositionParties.filter(([, pct]) => pct >= THRESHOLD);
-    const validOppSum = validOpposition.reduce((acc, [, pct]) => acc + pct, 0) || 1;
-
-    validOpposition.forEach(([pId, pct]) => {
-      const share = pct / validOppSum;
-      const camSeats = Math.round(CAMERA_OPPOSIZIONE * share);
-      const senSeats = Math.round(SENATO_OPPOSIZIONE * share);
-      const cKey = coalitionMap[pId];
-
-      results[pId] = {
-        cameraSeats: camSeats,
-        senatoSeats: senSeats,
-        percentage: pct,
-        passedThreshold: true,
-        status: cKey === 'centro' ? 'Centro' : 'Opposizione',
+        passedThreshold: false,
+        status: 'Fuori',
         electoralBonus: false,
       };
     });
 
-    // Partiti sotto soglia nelle opposizioni (0 seggi)
-    oppositionParties
-      .filter(([, pct]) => pct < THRESHOLD)
-      .forEach(([pId, pct]) => {
-        results[pId] = {
-          cameraSeats: 0,
-          senatoSeats: 0,
-          percentage: pct,
-          passedThreshold: false,
-          status: 'Fuori',
-          electoralBonus: false,
-        };
-      });
+  // Conteggi finali
+  const cameraMajoritySeats = Object.entries(results)
+    .filter(([id]) => coalitionMap[id] === winningCoalition)
+    .reduce((acc, [, r]) => acc + r.cameraSeats, 0);
 
-    // Conteggi finali maggioranza e opposizione
-    const cameraMajoritySeats = Object.entries(results)
-      .filter(([id]) => coalitionMap[id] === winningCoalition)
-      .reduce((acc, [, r]) => acc + r.cameraSeats, 0);
+  const senatoMajoritySeats = Object.entries(results)
+    .filter(([id]) => coalitionMap[id] === winningCoalition)
+    .reduce((acc, [, r]) => acc + r.senatoSeats, 0);
 
-    const senatoMajoritySeats = Object.entries(results)
-      .filter(([id]) => coalitionMap[id] === winningCoalition)
-      .reduce((acc, [, r]) => acc + r.senatoSeats, 0);
+  const cameraOppositionSeats = CAMERA_TOTAL - cameraMajoritySeats;
+  const senatoOppositionSeats = SENATO_TOTAL - senatoMajoritySeats;
 
-    const cameraOppositionSeats = CAMERA_TOTAL - cameraMajoritySeats;
-    const senatoOppositionSeats = SENATO_TOTAL - senatoMajoritySeats;
-
-    return {
-      law,
-      winningCoalition,
-      winningCoalitionLabel,
-      majorityAwarded: true,
-      cameraMajoritySeats,
-      senatoMajoritySeats,
-      cameraOppositionSeats,
-      senatoOppositionSeats,
-      coalitionTotals: {
-        governo: Number(coalitionVoteSums.governo.toFixed(1)),
-        campoLargo: Number(coalitionVoteSums.campoLargo.toFixed(1)),
-        centro: Number(coalitionVoteSums.centro.toFixed(1)),
-        altri: Number(coalitionVoteSums.solitario.toFixed(1)),
-      },
-      parties: results,
-    };
-  } else {
-    // --- ROSATELLUM (Sistema misto maggioritario-proporzionale) ---
-    const UNINOMINAL_CAMERA = 147;
-    const PROPORTIONAL_CAMERA = 245;
-    const UNINOMINAL_SENATO = 74;
-    const PROPORTIONAL_SENATO = 122;
-
-    const totalVotes =
-      coalitionVoteSums.governo + coalitionVoteSums.campoLargo + coalitionVoteSums.centro + coalitionVoteSums.solitario || 1;
-
-    const govShare = coalitionVoteSums.governo / totalVotes;
-    const oppShare = coalitionVoteSums.campoLargo / totalVotes;
-    const centerShare = coalitionVoteSums.centro / totalVotes;
-
-    let govUniCam = Math.round(UNINOMINAL_CAMERA * Math.pow(govShare * 1.35, 1.3));
-    let oppUniCam = Math.round(UNINOMINAL_CAMERA * Math.pow(oppShare * 1.25, 1.3));
-    let centerUniCam = Math.max(0, UNINOMINAL_CAMERA - (govUniCam + oppUniCam));
-
-    if (govUniCam + oppUniCam + centerUniCam !== UNINOMINAL_CAMERA) {
-      govUniCam += UNINOMINAL_CAMERA - (govUniCam + oppUniCam + centerUniCam);
-    }
-
-    const validParties: { id: string; pct: number }[] = [];
-    let validSum = 0;
-    Object.entries(partyPercentages).forEach(([id, pct]) => {
-      if (pct >= THRESHOLD) {
-        validParties.push({ id, pct });
-        validSum += pct;
-      }
-    });
-
-    validParties.forEach(({ id, pct }) => {
-      const relativePropShare = pct / (validSum || 1);
-      const propCamera = Math.round(PROPORTIONAL_CAMERA * relativePropShare);
-      const propSenato = Math.round(PROPORTIONAL_SENATO * relativePropShare);
-
-      const cKey = coalitionMap[id] || 'solitario';
-      const cTotal = coalitionVoteSums[cKey] || 1;
-      const shareInCoalition = pct / cTotal;
-
-      let uninominalCam = 0;
-      let uninominalSen = 0;
-      if (cKey === 'governo') {
-        uninominalCam = Math.round(govUniCam * shareInCoalition);
-        uninominalSen = Math.round((UNINOMINAL_SENATO * (govUniCam / UNINOMINAL_CAMERA)) * shareInCoalition);
-      } else if (cKey === 'campoLargo') {
-        uninominalCam = Math.round(oppUniCam * shareInCoalition);
-        uninominalSen = Math.round((UNINOMINAL_SENATO * (oppUniCam / UNINOMINAL_CAMERA)) * shareInCoalition);
-      }
-
-      results[id] = {
-        cameraSeats: propCamera + uninominalCam,
-        senatoSeats: propSenato + uninominalSen,
-        percentage: pct,
-        passedThreshold: true,
-        status: cKey === 'governo' ? 'Maggioranza' : cKey === 'centro' ? 'Centro' : 'Opposizione',
-      };
-    });
-
-    Object.entries(partyPercentages).forEach(([id, pct]) => {
-      if (!results[id]) {
-        results[id] = {
-          cameraSeats: 0,
-          senatoSeats: 0,
-          percentage: pct,
-          passedThreshold: false,
-          status: 'Fuori',
-        };
-      }
-    });
-
-    const cameraGovSeats = Object.entries(results)
-      .filter(([id]) => coalitionMap[id] === 'governo')
-      .reduce((acc, [, r]) => acc + r.cameraSeats, 0);
-    const senatoGovSeats = Object.entries(results)
-      .filter(([id]) => coalitionMap[id] === 'governo')
-      .reduce((acc, [, r]) => acc + r.senatoSeats, 0);
-
-    return {
-      law,
-      winningCoalition: govShare >= oppShare ? 'governo' : 'campoLargo',
-      winningCoalitionLabel: govShare >= oppShare ? 'Centrodestra' : 'Centrosinistra',
-      majorityAwarded: false,
-      cameraMajoritySeats: cameraGovSeats,
-      senatoMajoritySeats: senatoGovSeats,
-      cameraOppositionSeats: CAMERA_TOTAL - cameraGovSeats,
-      senatoOppositionSeats: SENATO_TOTAL - senatoGovSeats,
-      coalitionTotals: {
-        governo: Number(coalitionVoteSums.governo.toFixed(1)),
-        campoLargo: Number(coalitionVoteSums.campoLargo.toFixed(1)),
-        centro: Number(coalitionVoteSums.centro.toFixed(1)),
-        altri: Number(coalitionVoteSums.solitario.toFixed(1)),
-      },
-      parties: results,
-    };
-  }
+  return {
+    law: 'stabilicum',
+    winningCoalition,
+    winningCoalitionLabel,
+    majorityAwarded: true,
+    cameraMajoritySeats,
+    senatoMajoritySeats,
+    cameraOppositionSeats,
+    senatoOppositionSeats,
+    coalitionTotals: {
+      governo: Number(coalitionVoteSums.governo.toFixed(1)),
+      campoLargo: Number(coalitionVoteSums.campoLargo.toFixed(1)),
+      centro: Number(coalitionVoteSums.centro.toFixed(1)),
+      altri: Number(coalitionVoteSums.solitario.toFixed(1)),
+    },
+    parties: results,
+  };
 }
 
 /**
- * Confronto dedicato tra le due ipotesi politiche su Italia Viva (Matteo Renzi):
- * Ipotesi A: Italia Viva NEL Centrosinistra / Campo Largo
- * Ipotesi B: Italia Viva FUORI dal Centrosinistra (polo autonomo o terzo polo)
+ * Confronto dedicato tra le due ipotesi politiche su Italia Viva (Matteo Renzi) nello Stabilicum:
+ * Ipotesi A: Italia Viva NEL Campo Largo
+ * Ipotesi B: Italia Viva FUORI dal Campo Largo (polo autonomo o terzo polo)
+ * Nota: Partito Liberaldemocratico (Marattin) è sempre da solo/solitario.
  */
 export function compareItaliaVivaScenarios(
   partyPercentages: Record<string, number>,
   law: ElectoralLaw = 'stabilicum',
   includeVannacciInGov: boolean = false
 ) {
-  // Scenario A: Italia Viva con il Centrosinistra
+  // Scenario A: Italia Viva nel Campo Largo
   const coalitionMapWithIv: Record<string, string> = {
     fdi: 'governo',
     fi: 'governo',
     lega: 'governo',
     nm: 'governo',
-    scn: 'governo',
+    scn: 'governo', // Sud Chiama Nord nel Centrodestra
     fn: includeVannacciInGov ? 'governo' : 'solitario',
     pd: 'campoLargo',
     m5s: 'campoLargo',
     avs: 'campoLargo',
     piueu: 'campoLargo',
+    progettocivico: 'campoLargo', // Progetto Civico nel Campo Largo
+    piuuno: 'campoLargo', // Più Uno nel Campo Largo
     iv: 'campoLargo', // Italia Viva nel Campo Largo
     azione: 'centro',
+    pld: 'solitario', // Partito Liberaldemocratico (Marattin) da solo
     altri: 'solitario',
   };
 
-  // Scenario B: Italia Viva fuori dal Centrosinistra (autonoma / centro)
+  // Scenario B: Italia Viva fuori dal Campo Largo (autonoma / centro)
   const coalitionMapWithoutIv: Record<string, string> = {
     fdi: 'governo',
     fi: 'governo',
     lega: 'governo',
     nm: 'governo',
-    scn: 'governo',
+    scn: 'governo', // Sud Chiama Nord nel Centrodestra
     fn: includeVannacciInGov ? 'governo' : 'solitario',
     pd: 'campoLargo',
     m5s: 'campoLargo',
     avs: 'campoLargo',
     piueu: 'campoLargo',
+    progettocivico: 'campoLargo',
+    piuuno: 'campoLargo',
     iv: 'centro', // Italia Viva autonoma / centro
     azione: 'centro',
+    pld: 'solitario', // Partito Liberaldemocratico (Marattin) da solo
     altri: 'solitario',
   };
 

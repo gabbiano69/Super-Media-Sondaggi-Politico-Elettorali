@@ -49,7 +49,8 @@ export const PartiesDirectoryView: React.FC<PartiesDirectoryViewProps> = ({
         {[
           { id: 'all', label: 'Tutti i Partiti' },
           { id: 'governo', label: 'Maggioranza di Governo' },
-          { id: 'opposizione', label: 'Opposizioni / Campo Largo' },
+          { id: 'opposizione', label: 'Campo Largo Progressista' },
+          { id: 'solitario', label: 'Fuori dai Poli / Da soli (Marattin)' },
           { id: 'centro', label: 'Polo di Centro' },
         ].map((tab) => (
           <button
